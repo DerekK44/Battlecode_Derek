@@ -264,6 +264,44 @@ public class RobotPlayer {
         }
     }
 	
+	//	MESSAGING PROTOCOL
+	//	Index:		Typical Variable Name:				Purpose:
+	//	0			gameStage							Used by HQ to determine when certain kinds of units/structures should be built
+	//	1			numMinerFactories					Number of COMPLETED miner factories on the map
+	//	2			--									This holds the round # when a MINERFACTORY will be completed.  Default value is 0.  numMinerFactories is increased by 1 until building is completed
+	//	3			numBarracks							Number of COMPLETED barracks on the map
+	//	4			--									This holds the round # when a BARRACKS will be completed.  Default value is 0.  numBarracks is increased by 1 until building is completed
+	//	5			numSupplyDepots						Number of COMPLETED supply depots on map
+	//	6			--									This holds the round # when a SUPPLYDEPOT will be completed.  Default value is 0.  numSupplyDepots is increased by 1 until building is completed
+	//	7			numTankFactories					Number of COMPLETED tank factories on map
+	//	8			--									This holds the round # when a TANKFACTORY will be completed.  Default value is 0.  numTankFactories is increased by 1 until building is completed
+	//	9
+	//	10			seige								"1" if currently on offensive, "0" if on the defensive
+	//	11			seigeTime							Counts the number of turns during which the "seige" variable has been equal to "1"
+	//	...			...									...
+	//	100			rallyX								x-coordinate of soldier rally position
+	//	101			rallyY								y-coordinate of soldier rally position
+	//	...			...									...
+	//	1000		numBeavers							First element of the beaver-stack.  Count number of beavers on the map
+	//	1001		curBeaver							Pointer to a beaver in the beaver-stack.  Is an index (incremented by 2) on the range [1002,1998]
+	//	curBeaver	curState							Contains the "state" of this beaver.  Beaver is a state-machine operated by a "switch" statement
+	//	curBeaver+1	staticTime							Saves how much time the beaver has spent stationary.  Used to prevent one beaver from hogging a game-square for too long
+	//	...			...									...
+	//	2000		numMiners							First element of the miner-stack.  Count number of miners on the map
+	//	2001		curMiner							Pointer to a miner in the miner-stack.  Is an index (incremented by 2) on the range [2002,2998]
+	//	curMiner	curState							Contains the "state" of this miner.  Miner is a state-machine operated by a "switch" statement
+	//	curMiner+1	--									(**not yet implemented**)
+	//	...			...									...
+	//	3000		numSoldiers							First element of the soldier-stack.  Count number of soldiers on the map
+	//	3001		curSoldier							Pointer to a soldier in the soldier-stack.  Is an index (incremented by 2) on the range [2002,2998]
+	//	curSoldier	curState							Contains the "state" of this soldier.  Soldier is a state-machine operated by a "switch" statement
+	//	curSoldier+1--									(**not yet implemented**)
+	//	...
+	//	4000		numTanks							First element of the tank-stack.  Count number of tanks on the map
+	//	4001		curTank								Pointer to a tank in the tank-stack.  Is an index (incremented by 2) on the range [2002,2998]
+	//	curTank		curState							Contains the "state" of this tank.  Tank is a state-machine operated by a "switch" statement
+	//	curTank+1	--									(**not yet implemented**)
+	//					
 
 	//----- HQ -----//
     public static class HQ extends BaseBot {
@@ -380,11 +418,11 @@ public class RobotPlayer {
             	rc.broadcast(51,savedOre);
             }
             // BUILD TANK FACTORIES
-            if (numBeavers >= 8 && numTankFactories < 6 && numBarracks >= 3) {
+            if ((numBeavers >= 8 && numTankFactories < 2 && numBarracks >= 3) || (numBeavers >= 8 && numTanks > 5 && numTankFactories < 4)) {
             	if (rc.checkDependencyProgress(RobotType.BARRACKS) == DependencyProgress.DONE){
                 	builderBeaver = beaverStack + 2*numBeavers;	//first try the closest beaver!
                 	rc.broadcast(builderBeaver, 6); 	// tell first beaver to go into "build-tank-factory"-mode (3)
-                	savedOre = RobotType.TANKFACTORY.oreCost;
+                	savedOre = RobotType.TANKFACTORY.oreCost + RobotType.TANK.oreCost;	// added tank cost so we would always be saving for building tanks (deprioritizing soldiers)
                 	rc.broadcast(51,savedOre);
             	}
             }
@@ -409,12 +447,12 @@ public class RobotPlayer {
         		savedOre = RobotType.BARRACKS.oreCost;
             	rc.broadcast(51,savedOre);
         	}
-        	if (numSoldiers+numTanks > 30) {
+        	if (numSoldiers+numTanks > 30 || numTanks > 10) {
         		rc.broadcast(100, this.theirHQ.x);
         		rc.broadcast(101, this.theirHQ.y);
         		rc.broadcast(10, 1);	// We are now seiging on enemy base
         	}
-        	if ((numSoldiers < 20 && seige==1) || (seige==1 && seigeTime >= 100)) {
+        	if ((numSoldiers < 20 && seige==1 && numTanks < 3) || (seige==1 && seigeTime >= 100)) {
         		rc.broadcast(100, (int)((this.theirHQ.x+2*this.myHQ.x)/3));
         		rc.broadcast(101, (int)((this.theirHQ.y+2*this.myHQ.y)/3));	// Rally around home base
         		seige = 0;
@@ -755,8 +793,10 @@ public class RobotPlayer {
         public void execute() throws GameActionException {
         	rc.broadcast(3, rc.readBroadcast(3)+1);	//Take attendance
         	int soldierStack = 3000;
+        	int tankStack = 4000;
             int numSoldiers = rc.readBroadcast(soldierStack);
-            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.SOLDIER.oreCost + rc.readBroadcast(51))){
+            int numTanks = rc.readBroadcast(tankStack);
+            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.SOLDIER.oreCost + rc.readBroadcast(51)) && numSoldiers < 35){
                 Direction newDir = getSpawnDirection(RobotType.SOLDIER);
                 if (newDir != null) {
                     rc.spawn(newDir, RobotType.SOLDIER);
@@ -781,7 +821,7 @@ public class RobotPlayer {
         	rc.broadcast(7, rc.readBroadcast(7)+1);	//Take attendance
         	int tankStack = 4000;
             int numTanks = rc.readBroadcast(tankStack);
-            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.TANK.oreCost + rc.readBroadcast(51))){
+            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.TANK.oreCost)){	//prioritize tank building - don't save
                 Direction newDir = getSpawnDirection(RobotType.TANK);
                 if (newDir != null) {
                     rc.spawn(newDir, RobotType.TANK);
@@ -806,7 +846,7 @@ public class RobotPlayer {
         	rc.broadcast(1, rc.readBroadcast(1)+1);	//Take attendance
         	int minerStack = 2000;
             int numMiners = rc.readBroadcast(minerStack);
-            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.MINER.oreCost + rc.readBroadcast(51)) && numMiners < 50){
+            if (rc.isCoreReady() && rc.getTeamOre() > (RobotType.MINER.oreCost + rc.readBroadcast(51)) && numMiners < 35){
                 Direction newDir = getSpawnDirection(RobotType.MINER);
                 if (newDir != null) {
                     rc.spawn(newDir, RobotType.MINER);
@@ -876,26 +916,26 @@ public class RobotPlayer {
         		}
         		break;
         		
-        	case 1: // Soldier in "explore" mode (random movement)
-        		if (rc.isCoreReady()) {
-        			rc.move(getRandomDirection());	// Currently set to move in random direction,  will FIX later
-        		}
-        		break;
+//        	case 1: // Soldier in "explore" mode (random movement)
+//        		if (rc.isCoreReady()) {
+//        			rc.move(getRandomDirection());	// Currently set to move in random direction,  will FIX later
+//        		}
+//        		break;
         		
-        	case 2:	// Soldier in "engage-the-enemy" mode
-        		Direction backToBase = backToBase(curLoc);
-        		int distanceToHQ = curLoc.distanceSquaredTo(this.myHQ);
-        		rc.setIndicatorString(1, "distanceSquareToHQ: "+distanceToHQ);
-        		if (distanceToHQ < 25){
-        			curState = 0;
-        			stateChanged = true;
-        		} else {
-        			if (rc.isCoreReady()){
-            			rc.move(backToBase);
-            			//rc.broadcast
-            		}
-        		}
-        		break;
+//        	case 2:	// Soldier in "engage-the-enemy" mode
+//        		Direction backToBase = backToBase(curLoc);
+//        		int distanceToHQ = curLoc.distanceSquaredTo(this.myHQ);
+//        		rc.setIndicatorString(1, "distanceSquareToHQ: "+distanceToHQ);
+//        		if (distanceToHQ < 25){
+//        			curState = 0;
+//        			stateChanged = true;
+//        		} else {
+//        			if (rc.isCoreReady()){
+//            			rc.move(backToBase);
+//            			//rc.broadcast
+//            		}
+//        		}
+//        		break;
         	}
 
         	//Take care of stack
